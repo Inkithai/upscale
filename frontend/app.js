@@ -329,9 +329,9 @@
     document.querySelectorAll("#settings button, #settings input").forEach((el) => {
       el.disabled = processing;
     });
-    $("btn-process").disabled = processing || !(c.pending);
+    $("btn-process").disabled = processing || !((c.pending || 0) + (c.cancelled || 0));
     $("btn-cancel").disabled = !processing;
-    $("btn-retry").disabled = !(c.failed);
+    $("btn-retry").disabled = !((c.failed || 0) + (c.cancelled || 0));
     $("btn-download-all").disabled = !(c.completed);
 
     queueEl.innerHTML = "";
@@ -366,7 +366,7 @@
           ${it.error ? `<p class="error-msg">${escapeHtml(it.error)}</p>` : ""}
         </button>
         <div class="row-actions">
-          ${it.status === "failed" ? `<button type="button" class="btn btn-ghost btn-small" data-retry="${it.id}">Retry</button>` : ""}
+          ${it.status === "failed" || it.status === "cancelled" ? `<button type="button" class="btn btn-ghost btn-small" data-retry="${it.id}">Retry</button>` : ""}
           ${it.status === "completed" ? `<a class="btn btn-ghost btn-small" href="${it.download_url}" download="${escapeHtml(it.download_name || "upscaled.jpg")}">Download JPG</a>` : ""}
         </div>
       `;
@@ -383,6 +383,8 @@
       return;
     }
     detail.hidden = false;
+    $("compare-before").onerror = () => { $("compare-before").removeAttribute("src"); };
+    $("compare-after").onerror = () => { $("compare-after").removeAttribute("src"); };
     $("compare-before").src = item.preview_url;
     $("compare-after").src = item.result_preview_url || item.preview_url;
     setCompare(state.compare);

@@ -257,8 +257,7 @@ def start_processing(
     with _lock:
         if settings:
             job["settings"] = normalize_settings(settings, current=job.get("settings"))
-        if job["cancel"] and job["status"] == "cancelled":
-            job["cancel"] = False
+        job["cancel"] = False
         if only_ids:
             wanted = set(only_ids)
             for it in job["items"]:
@@ -268,9 +267,13 @@ def start_processing(
                     it["progress"] = 0
                     it["stage"] = "queued"
         else:
+            # Resume work that was cancelled; leave failures for explicit retry.
             for it in job["items"]:
-                if it["status"] in ("failed", "cancelled"):
-                    continue
+                if it["status"] == "cancelled":
+                    it["status"] = "pending"
+                    it["error"] = None
+                    it["progress"] = 0
+                    it["stage"] = "queued"
         pending = [it for it in job["items"] if it["status"] == "pending"]
         if not pending:
             return job

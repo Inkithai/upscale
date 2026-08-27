@@ -113,6 +113,21 @@ def test_cancel_preserves_completed(client):
             assert it["error"]
 
 
+def test_cancel_then_process_resumes_cancelled(client):
+    z = make_zip([(f"p{i}.jpg", rgb_bytes("JPEG", size=(16, 16))) for i in range(4)])
+    job = _upload(client, "c.zip", z).json()
+    job_id = job["id"]
+    client.post(f"/api/jobs/{job_id}/process")
+    client.post(f"/api/jobs/{job_id}/cancel")
+    mid = wait_job(client, job_id)
+    if mid["counts"].get("cancelled"):
+        client.post(f"/api/jobs/{job_id}/process")
+        done = wait_job(client, job_id)
+        assert done["counts"]["cancelled"] == 0
+        assert done["counts"]["pending"] == 0
+        assert done["counts"]["completed"] + done["counts"]["failed"] == done["total"]
+
+
 def test_unknown_job_404(client):
     res = client.get("/api/jobs/doesnotexist")
     assert res.status_code == 404
