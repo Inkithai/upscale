@@ -3,3 +3,9 @@ jobs/
 __pycache__/
 *.pyc
 backend/models/
+.env
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+.coverage
+htmlcov/
