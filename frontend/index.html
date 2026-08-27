@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Image Upscaler</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0b0c10;
+      --panel: #14161c;
+      --line: #2a2e38;
+      --text: #e8eaef;
+      --muted: #8b92a5;
+      --accent: #7c5cff;
+      --accent-2: #3ee0b2;
+      --warn: #ffb020;
+      --danger: #ff5d6c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Instrument Sans", system-ui, sans-serif;
+      background:
+        radial-gradient(1200px 600px at 10% -10%, #1b1540 0%, transparent 50%),
+        radial-gradient(900px 500px at 100% 0%, #0d2a24 0%, transparent 45%),
+        var(--bg);
+      color: var(--text);
+    }
+    .wrap { max-width: 920px; margin: 0 auto; padding: 48px 20px 80px; }
+    h1 { font-size: 2.1rem; margin: 0 0 8px; letter-spacing: -0.03em; }
+    .sub { color: var(--muted); margin-bottom: 32px; line-height: 1.5; }
+    .drop {
+      border: 1.5px dashed var(--line);
+      background: color-mix(in srgb, var(--panel) 88%, transparent);
+      border-radius: 16px;
+      padding: 40px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+    }
+    .drop.drag { border-color: var(--accent); background: #1a1730; }
+    .drop input { display: none; }
+    .drop strong { display: block; font-size: 1.1rem; margin-bottom: 6px; }
+    .drop span { color: var(--muted); font-size: 0.92rem; }
+    button.primary {
+      margin-top: 18px;
+      background: linear-gradient(135deg, var(--accent), #4e8dff);
+      color: white;
+      border: 0;
+      border-radius: 10px;
+      padding: 12px 22px;
+      font-weight: 600;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    button.primary:disabled { opacity: .45; cursor: not-allowed; }
+    .progress-wrap { margin-top: 28px; display: none; }
+    .bar {
+      height: 10px;
+      background: #22252e;
+      border-radius: 99px;
+      overflow: hidden;
+    }
+    .bar > i {
+      display: block;
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      transition: width .25s;
+    }
+    .meta { margin-top: 10px; color: var(--muted); font-family: "IBM Plex Mono", monospace; font-size: 0.82rem; }
+    .results { margin-top: 32px; display: none; }
+    .results h2 { font-size: 1.15rem; margin: 0 0 12px; }
+    .zip-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #1c2430;
+      border: 1px solid var(--line);
+      color: var(--text);
+      text-decoration: none;
+      padding: 10px 16px;
+      border-radius: 10px;
+      font-weight: 600;
+      margin-bottom: 18px;
+    }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .card img { width: 100%; height: 150px; object-fit: cover; background: #0e1014; display: block; }
+    .card .info { padding: 10px 12px 12px; }
+    .card .info a { color: var(--accent-2); text-decoration: none; font-weight: 600; font-size: 0.9rem; }
+    .size { color: var(--muted); font-size: 0.8rem; margin-top: 4px; font-family: "IBM Plex Mono", monospace; }
+    .err { color: var(--danger); margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>AI Image Upscaler</h1>
+    <p class="sub">
+      Upload a single JPG, PNG, or WebP — or a ZIP of images.
+      Each file is 4× AI-upscaled (ESPCN) and saved as JPEG at least 4&nbsp;MB.
+    </p>
+    <label class="drop" id="drop">
+      <input type="file" id="file" accept=".jpg,.jpeg,.png,.webp,.zip,image/jpeg,image/png,image/webp,application/zip" />
+      <strong>Drop an image or ZIP here</strong>
+      <span>or click to browse. Common formats: JPG, PNG, WebP, ZIP.</span>
+    </label>
+    <button class="primary" id="go" disabled>Upscale</button>
+    <p class="err" id="err"></p>
+    <div class="progress-wrap" id="prog">
+      <div class="bar"><i id="bar"></i></div>
+      <div class="meta" id="meta">Waiting…</div>
+    </div>
+    <div class="results" id="results">
+      <h2>Processed images</h2>
+      <a class="zip-btn" id="zip" href="#">Download all as ZIP</a>
+      <div class="grid" id="grid"></div>
+    </div>
+  </div>
+  <script>
+    const fileEl = document.getElementById("file");
+    const drop = document.getElementById("drop");
+    const go = document.getElementById("go");
+    const err = document.getElementById("err");
+    const prog = document.getElementById("prog");
+    const bar = document.getElementById("bar");
+    const meta = document.getElementById("meta");
+    const results = document.getElementById("results");
+    const grid = document.getElementById("grid");
+    const zip = document.getElementById("zip");
+
+    let chosen = null;
+
+    ["dragenter","dragover"].forEach(ev => drop.addEventListener(ev, e => {
+      e.preventDefault(); drop.classList.add("drag");
+    }));
+    ["dragleave","drop"].forEach(ev => drop.addEventListener(ev, e => {
+      e.preventDefault(); drop.classList.remove("drag");
+    }));
+    drop.addEventListener("drop", e => {
+      const f = e.dataTransfer.files[0];
+      if (f) { chosen = f; fileEl.files = e.dataTransfer.files; go.disabled = false; }
+    });
+    fileEl.addEventListener("change", () => {
+      chosen = fileEl.files[0] || null;
+      go.disabled = !chosen;
+    });
+
+    go.addEventListener("click", async () => {
+      if (!chosen) return;
+      err.textContent = "";
+      results.style.display = "none";
+      prog.style.display = "block";
+      go.disabled = true;
+      bar.style.width = "8%";
+      meta.textContent = "Uploading…";
+
+      const fd = new FormData();
+      fd.append("file", chosen);
+      let jobId;
+      try {
+        const up = await fetch("/api/upload", { method: "POST", body: fd });
+        if (!up.ok) throw new Error(await up.text());
+        const info = await up.json();
+        jobId = info.job_id;
+        meta.textContent = `Uploaded ${info.total} image(s). Processing…`;
+        bar.style.width = "15%";
+      } catch (e) {
+        err.textContent = e.message || "Upload failed";
+        go.disabled = false;
+        return;
+      }
+
+      const poll = setInterval(async () => {
+        try {
+          const r = await fetch(`/api/jobs/${jobId}`);
+          const j = await r.json();
+          const pct = j.total ? Math.round((j.done / j.total) * 85) + 15 : 20;
+          bar.style.width = Math.min(pct, 95) + "%";
+          meta.textContent = j.status === "processing"
+            ? `Processing ${j.done}/${j.total} — ${j.current || ""}`
+            : (j.status === "queued" ? "Queued…" : j.status);
+          if (j.status === "done") {
+            clearInterval(poll);
+            show(j);
+          }
+          if (j.status === "error") {
+            clearInterval(poll);
+            err.textContent = j.error || "Processing failed";
+            go.disabled = false;
+          }
+        } catch (_) {}
+      }, 400);
+    });
+
+    function show(j) {
+      bar.style.width = "100%";
+      meta.textContent = `Done — ${j.total} image(s)`;
+      go.disabled = false;
+      results.style.display = "block";
+      zip.href = j.zip_url;
+      grid.innerHTML = "";
+      (j.outputs || []).forEach(o => {
+        const mb = (o.size / (1024 * 1024)).toFixed(2);
+        const el = document.createElement("div");
+        el.className = "card";
+        el.innerHTML = `
+          <img src="${o.url}" alt="${o.name}" />
+          <div class="info">
+            <a href="${o.url}" download="${o.name}">Download ${o.name}</a>
+            <div class="size">${mb} MB JPEG</div>
+          </div>`;
+        grid.appendChild(el);
+      });
+    }
+  </script>
+</body>
+</html>
