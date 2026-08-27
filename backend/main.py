@@ -34,6 +34,7 @@ from backend.jobs import (
     retry_items,
     start_processing,
 )
+from backend.settings import extract_settings_payload
 from backend.upscale import model_status
 
 logging.basicConfig(
@@ -148,16 +149,21 @@ def api_delete_job(job_id: str):
     return {"ok": True}
 
 
+async def _json_body(request: Request) -> dict:
+    if not request.headers.get("content-type", "").startswith("application/json"):
+        return {}
+    try:
+        body = await request.json()
+    except Exception:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
 @app.post("/api/jobs/{job_id}/process")
 async def api_process(job_id: str, request: Request):
-    body = {}
-    if request.headers.get("content-type", "").startswith("application/json"):
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
-    ids = body.get("item_ids") if isinstance(body, dict) else None
-    job = start_processing(job_id, only_ids=ids)
+    body = await _json_body(request)
+    ids = body.get("item_ids")
+    job = start_processing(job_id, only_ids=ids, settings=extract_settings_payload(body))
     return public_job(job)
 
 
@@ -167,13 +173,17 @@ def api_cancel(job_id: str):
 
 
 @app.post("/api/jobs/{job_id}/retry-failed")
-def api_retry_failed(job_id: str):
-    return public_job(retry_items(job_id))
+async def api_retry_failed(job_id: str, request: Request):
+    body = await _json_body(request)
+    return public_job(retry_items(job_id, settings=extract_settings_payload(body)))
 
 
 @app.post("/api/jobs/{job_id}/items/{item_id}/retry")
-def api_retry_item(job_id: str, item_id: str):
-    return public_job(retry_items(job_id, item_ids=[item_id]))
+async def api_retry_item(job_id: str, item_id: str, request: Request):
+    body = await _json_body(request)
+    return public_job(
+        retry_items(job_id, item_ids=[item_id], settings=extract_settings_payload(body))
+    )
 
 
 @app.delete("/api/jobs/{job_id}/items/{item_id}")

@@ -1,19 +1,20 @@
 # AI Image Upscaler
 
-A small production-style web app that **4× AI-upscales** images and exports **real JPEG files of at least 4 MB**.
+A small production-style web app that AI-upscales images and exports **real JPEG files**.
 
-Upload one photo or a ZIP of many. Each image is validated, oriented, upscaled, encoded as JPEG, and queued independently so one failure never kills the batch.
+**Defaults are 4× and 4 MB**, but both are user-selectable. Upload one photo or a ZIP of many. Each image is validated, oriented, upscaled, encoded as JPEG, and queued independently so one failure never kills the batch.
 
 ```
-UPLOAD → VALIDATE → QUEUE → 4× AI UPSCALING → JPEG ≥ 4 MB → COMPARE → DOWNLOAD
+UPLOAD → VALIDATE → QUEUE → AI UPSCALING (default 4×) → JPEG ≥ target (default 4 MB) → COMPARE → DOWNLOAD
 ```
 
 ## Features
 
 - Single image upload (drag & drop, file picker, or paste a screenshot)
 - ZIP upload with nested folders
-- 4× AI super-resolution (OpenCV **ESPCN x4** on CPU)
-- Every successful output is `image/jpeg` and **≥ 4 MB** (no dummy file padding)
+- AI super-resolution (OpenCV **ESPCN**; default **4×**, also 2× and 8×)
+- JPEG output with a **selectable minimum size** (default **4 MB**; presets 2/4/6/8/10/20 MB plus custom min/max)
+- No dummy file padding — outputs are real JPEGs
 - Per-image status, progress, retry, and cancel
 - Partial batch failure: download what worked, retry what did not
 - Before/after slider (mouse, touch, keyboard)
@@ -27,7 +28,7 @@ UPLOAD → VALIDATE → QUEUE → 4× AI UPSCALING → JPEG ≥ 4 MB → COMPARE
 
 | Input | Output |
 | --- | --- |
-| JPG, JPEG, PNG, WebP | JPEG (`image/jpeg`, ≥ 4 MB) |
+| JPG, JPEG, PNG, WebP | JPEG (`image/jpeg`, ≥ chosen target, default 4 MB) |
 | ZIP of the above | ZIP of JPEGs |
 
 Harmless extras inside ZIPs (`.DS_Store`, `Thumbs.db`, `__MACOSX/`) are ignored.
@@ -40,24 +41,37 @@ Harmless extras inside ZIPs (`.DS_Store`, `Thumbs.db`, `__MACOSX/`) are ignored.
 
 After upload you see filename, size, dimensions, format, and validation status. Remove files, process the queue, cancel, or retry without re-uploading.
 
-## 4× AI upscaling
+## Upscale factor
 
-The **web app** uses OpenCV DNN **ESPCN x4**. That is real 4× super-resolution, chosen because it runs on CPU-only free hosts.
+Choose **2×**, **4×** (default), or **8×** before processing.
 
-If the ESPCN weights cannot be downloaded, the server falls back to cubic resize + unsharp mask and still scales **4×**. `/health` reports `"model": "espcn"` or `"model": "fallback"`.
+The **web app** uses OpenCV DNN **ESPCN x4** as the AI model:
+
+| Setting | How it is produced |
+| --- | --- |
+| 2× | ESPCN 4×, then high-quality downscale to 2× |
+| 4× | Native ESPCN 4× |
+| 8× | ESPCN 4×, then a 2× cubic + unsharp step |
+
+If the ESPCN weights cannot be downloaded, the server falls back to cubic resize + unsharp for the chosen factor. `/health` reports `"model": "espcn"` or `"model": "fallback"`.
 
 The **Colab notebook** is a separate GPU implementation (Real-ESRGAN via [spandrel](https://github.com/chaiNNer-org/spandrel)). It is not used by this web app.
 
-## 4 MB JPEG requirement
+## Output size (JPEG)
 
-4× resolution alone does not guarantee a 4 MB file. After upscaling the encoder:
+Output is always JPEG. **4 MB is the default minimum**, not a hard-coded product limit.
+
+Presets: **2, 4, 6, 8, 10, 20 MB**, plus **Custom** (minimum, and optional maximum).
+
+After upscaling the encoder:
 
 1. Writes a high-quality 4:4:4 JPEG
 2. Raises quality to 100 if needed
-3. Enlarges with LANCZOS if the file is still under 4 MB
+3. Enlarges with LANCZOS if the file is still under the chosen minimum
 4. As a last resort, adds light photographic grain (still a real image)
+5. If a maximum is set, it tries to stay in that window
 
-It does **not** append JPEG comment markers or trailing zeros. If a file still cannot reach 4 MB without exceeding `MAX_OUTPUT_PIXELS`, that item **fails** instead of returning a padded fake.
+It does **not** append JPEG comment markers or trailing zeros. If a file cannot meet the target without exceeding `MAX_OUTPUT_PIXELS`, that item **fails** instead of returning a padded fake.
 
 ## Transparency
 
@@ -110,8 +124,8 @@ See [`.env.example`](.env.example). Important knobs:
 | `MAX_IMAGES_PER_BATCH` | 80 | Max images per job |
 | `MAX_EXTRACTED_SIZE` | 400 MB | Max decompressed ZIP bytes |
 | `MAX_IMAGE_PIXELS` | 12 MP | Max input pixels |
-| `MIN_OUTPUT_SIZE_MB` | 4.0 | Hard JPEG floor |
-| `UPSCALE_FACTOR` | 4 | Super-resolution factor |
+| `MIN_OUTPUT_SIZE_MB` | 4.0 | Default JPEG minimum (users can change per job) |
+| `UPSCALE_FACTOR` | 4 | Default super-resolution factor (users can pick 2×/4×/8×) |
 | `JPEG_QUALITY` | 95 | Starting JPEG quality |
 | `MAX_CONCURRENT_JOBS` | 1 | Parallel jobs (keep low on CPU) |
 | `TRANSPARENCY_BG` | `#FFFFFF` | Alpha composite color |
@@ -177,7 +191,8 @@ It uses Colab’s PyTorch plus **spandrel** (Real-ESRGAN x4). Do not swap it for
 
 - CPU ESPCN is slower and softer than Colab Real-ESRGAN on GPU
 - Very large inputs are rejected (`MAX_IMAGE_PIXELS`) so the process does not OOM
-- Extremely simple graphics (a 2×2 flat color) may fail the 4 MB rule if enlargement would exceed `MAX_OUTPUT_PIXELS`
+- Extremely simple graphics may fail a large size target if enlargement would exceed `MAX_OUTPUT_PIXELS`
+- 8× on already-large photos can be rejected to avoid running out of memory
 - Jobs live in local disk and memory — no Redis, database, or accounts
 - Previews are downscaled; downloads are the full JPEG
 

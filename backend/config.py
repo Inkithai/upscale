@@ -89,6 +89,13 @@ SUPPORTED_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP"}
 
 def public_config() -> dict:
     """Values the UI is allowed to show. No secrets."""
+    from backend.settings import (
+        ALLOWED_SCALES,
+        MAX_ALLOWED_OUTPUT_MB,
+        MIN_ALLOWED_OUTPUT_MB,
+        OUTPUT_PRESETS_MB,
+    )
+
     return {
         "max_upload_size": MAX_UPLOAD_SIZE,
         "max_zip_size": MAX_ZIP_SIZE,
@@ -96,7 +103,12 @@ def public_config() -> dict:
         "max_image_pixels": MAX_IMAGE_PIXELS,
         "min_output_size_mb": MIN_OUTPUT_SIZE_MB,
         "upscale_factor": UPSCALE_FACTOR,
+        "upscale_factors": list(ALLOWED_SCALES),
+        "output_size_presets_mb": list(OUTPUT_PRESETS_MB),
+        "min_output_mb_limit": MIN_ALLOWED_OUTPUT_MB,
+        "max_output_mb_limit": MAX_ALLOWED_OUTPUT_MB,
         "jpeg_quality": JPEG_QUALITY,
         "transparency_bg": TRANSPARENCY_BG,
         "supported": ["JPG", "JPEG", "PNG", "WebP", "ZIP"],
+        "output_format": "JPEG",
     }

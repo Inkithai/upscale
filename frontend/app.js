@@ -26,7 +26,68 @@
     poll: null,
     compare: 50,
     busy: false,
+    scale: 4,
+    minMb: 4,
+    maxMb: null,
+    customSize: false,
   };
+
+  function currentSettings() {
+    const minMb = state.customSize
+      ? parseFloat($("min-mb").value) || state.minMb
+      : state.minMb;
+    let maxMb = null;
+    if (state.customSize) {
+      const raw = $("max-mb").value;
+      if (raw !== "") maxMb = parseFloat(raw);
+    }
+    return {
+      upscale_factor: state.scale,
+      min_output_mb: minMb,
+      max_output_mb: Number.isFinite(maxMb) ? maxMb : null,
+    };
+  }
+
+  function syncSizeChips() {
+    document.querySelectorAll("[data-mb]").forEach((btn) => {
+      const val = btn.getAttribute("data-mb");
+      const on = state.customSize ? val === "custom" : val === String(state.minMb);
+      btn.classList.toggle("is-on", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    $("custom-size").hidden = !state.customSize;
+  }
+
+  document.querySelectorAll("[data-scale]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.scale = parseInt(btn.getAttribute("data-scale"), 10);
+      document.querySelectorAll("[data-scale]").forEach((b) => {
+        const on = b === btn;
+        b.classList.toggle("is-on", on);
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+    });
+  });
+  document.querySelectorAll("[data-mb]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const val = btn.getAttribute("data-mb");
+      if (val === "custom") {
+        state.customSize = true;
+        $("min-mb").value = String(state.minMb);
+      } else {
+        state.customSize = false;
+        state.minMb = parseFloat(val);
+        state.maxMb = null;
+        $("min-mb").value = val;
+        $("max-mb").value = "";
+      }
+      syncSizeChips();
+    });
+  });
+  $("min-mb").addEventListener("input", () => {
+    const n = parseFloat($("min-mb").value);
+    if (Number.isFinite(n)) state.minMb = n;
+  });
 
   function toast(message, bad = false) {
     const el = document.createElement("div");
@@ -237,6 +298,9 @@
       queueWrap.hidden = true;
       empty.hidden = false;
       detail.hidden = true;
+      document.querySelectorAll("#settings button, #settings input").forEach((el) => {
+        el.disabled = false;
+      });
       return;
     }
     empty.hidden = true;
@@ -262,6 +326,9 @@
     }
 
     const processing = job.status === "processing" || job.status === "cancelling";
+    document.querySelectorAll("#settings button, #settings input").forEach((el) => {
+      el.disabled = processing;
+    });
     $("btn-process").disabled = processing || !(c.pending);
     $("btn-cancel").disabled = !processing;
     $("btn-retry").disabled = !(c.failed);
@@ -414,7 +481,11 @@
     if (!state.job) return;
     try {
       announce("AI upscaling your image…");
-      state.job = await api(`/api/jobs/${state.job.id}/process`, { method: "POST" });
+      state.job = await api(`/api/jobs/${state.job.id}/process`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(currentSettings()),
+      });
       renderJob();
       startPoll();
     } catch (err) {
@@ -435,7 +506,11 @@
 
   async function retryOne(id) {
     try {
-      state.job = await api(`/api/jobs/${state.job.id}/items/${id}/retry`, { method: "POST" });
+      state.job = await api(`/api/jobs/${state.job.id}/items/${id}/retry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(currentSettings()),
+      });
       renderJob();
       startPoll();
     } catch (err) {

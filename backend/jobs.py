@@ -19,12 +19,11 @@ from backend.config import (
     MAX_IMAGES_PER_BATCH,
     MAX_UPLOAD_SIZE,
     MAX_ZIP_SIZE,
-    MIN_OUTPUT_BYTES,
     SUPPORTED_IMAGE_EXTS,
-    UPSCALE_FACTOR,
 )
 from backend.errors import AppError
 from backend.images import make_preview_jpeg, prepare_for_upscale, validate_and_open
+from backend.settings import default_settings, normalize_settings
 from backend.upscale import process_image
 from backend.ziputil import extract_images_from_zip, unique_label, write_zip
 
@@ -102,8 +101,11 @@ def public_job(job: dict) -> dict:
         "items": items,
         "zip_url": f"/api/jobs/{job['id']}/zip" if counts["completed"] else None,
         "error": job.get("error"),
-        "upscale_factor": UPSCALE_FACTOR,
-        "min_output_bytes": MIN_OUTPUT_BYTES,
+        "settings": job.get("settings") or default_settings(),
+        "upscale_factor": (job.get("settings") or default_settings())["upscale_factor"],
+        "min_output_bytes": (job.get("settings") or default_settings()).get(
+            "min_output_bytes", 0
+        ),
     }
 
 
@@ -183,6 +185,7 @@ def create_job(files: list[tuple[str, bytes]]) -> dict:
         "used_names": set(),
         "times": [],
         "running": False,
+        "settings": default_settings(),
     }
 
     pending_images: list[tuple[str, bytes]] = []
@@ -245,9 +248,15 @@ def create_job(files: list[tuple[str, bytes]]) -> dict:
     return job
 
 
-def start_processing(job_id: str, only_ids: Optional[list[str]] = None) -> dict:
+def start_processing(
+    job_id: str,
+    only_ids: Optional[list[str]] = None,
+    settings: Optional[dict] = None,
+) -> dict:
     job = get_job(job_id)
     with _lock:
+        if settings:
+            job["settings"] = normalize_settings(settings, current=job.get("settings"))
         if job["cancel"] and job["status"] == "cancelled":
             job["cancel"] = False
         if only_ids:
@@ -290,9 +299,15 @@ def cancel_job(job_id: str) -> dict:
     return job
 
 
-def retry_items(job_id: str, item_ids: Optional[list[str]] = None) -> dict:
+def retry_items(
+    job_id: str,
+    item_ids: Optional[list[str]] = None,
+    settings: Optional[dict] = None,
+) -> dict:
     job = get_job(job_id)
     with _lock:
+        if settings:
+            job["settings"] = normalize_settings(settings, current=job.get("settings"))
         job["cancel"] = False
         for it in job["items"]:
             if item_ids is not None and it["id"] not in item_ids:
@@ -407,7 +422,14 @@ def _process_item(job: dict, item: dict) -> None:
                 item["stage"] = "cancelled"
             return
         data = orig_path.read_bytes()
-        jpeg, info, final_img = process_image(data, progress=progress)
+        cfg = job.get("settings") or default_settings()
+        jpeg, info, final_img = process_image(
+            data,
+            progress=progress,
+            scale=int(cfg.get("upscale_factor") or 4),
+            min_bytes=int(cfg.get("min_output_bytes") or 0),
+            max_bytes=cfg.get("max_output_bytes"),
+        )
         preview = make_preview_jpeg(final_img)
         d = _item_dir(job_id, item_id)
         used = job.setdefault("used_names", set())

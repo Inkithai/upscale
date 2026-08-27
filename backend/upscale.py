@@ -142,21 +142,42 @@ def _upsample_tiled(sr, bgr: np.ndarray, tile: int = 320, overlap: int = 12, sca
     return dest
 
 
+def _espcn_x4(bgr: np.ndarray):
+    sr = get_sr()
+    if sr is None:
+        return None
+    try:
+        return _upsample_tiled(sr, bgr, scale=4)
+    except Exception:
+        log.exception("ESPCN upsample failed; falling back to cubic")
+        return None
+
+
 def ai_upscale(pil: Image.Image, scale: int = UPSCALE_FACTOR) -> tuple[Image.Image, str]:
-    """Return (upscaled RGB image, backend name). Always scale by `scale` (default 4)."""
+    """Return (upscaled RGB image, backend name). Default scale is 4× ESPCN."""
+    if scale not in (2, 4, 8):
+        scale = 4
     rgb = np.array(pil.convert("RGB"))
     bgr = rgb[:, :, ::-1].copy()
+    h, w = bgr.shape[:2]
     backend = "cubic"
     out = None
+
     if scale == 4:
-        sr = get_sr()
-        if sr is not None:
-            try:
-                out = _upsample_tiled(sr, bgr, scale=4)
-                backend = "espcn"
-            except Exception:
-                log.exception("ESPCN upsample failed; falling back to cubic")
-                out = None
+        out = _espcn_x4(bgr)
+        if out is not None:
+            backend = "espcn"
+    elif scale == 2:
+        x4 = _espcn_x4(bgr)
+        if x4 is not None:
+            out = cv2.resize(x4, (w * 2, h * 2), interpolation=cv2.INTER_AREA)
+            backend = "espcn"
+    elif scale == 8:
+        x4 = _espcn_x4(bgr)
+        if x4 is not None:
+            out = _cubic_unsharp(x4, 2)
+            backend = "espcn"
+
     if out is None:
         out = _cubic_unsharp(bgr, scale)
         backend = "cubic"
@@ -226,25 +247,29 @@ def _shrink_to_soft_max(
     return best_data, best_img
 
 
+def _size_phrase(n_bytes: int) -> str:
+    mb = n_bytes / (1024 * 1024)
+    if mb >= 1:
+        return f"{mb:g} MB" if mb >= 10 else f"{mb:.1f} MB".replace(".0 MB", " MB")
+    return f"{n_bytes} bytes"
+
+
 def jpeg_at_least_min_bytes(
     pil: Image.Image,
     min_bytes: int = MIN_OUTPUT_BYTES,
     max_pixels: int = MAX_OUTPUT_PIXELS,
     max_side: int = MAX_OUTPUT_SIDE,
+    max_bytes: Optional[int] = None,
 ) -> tuple[bytes, Image.Image]:
-    """Encode a real JPEG that is at least `min_bytes`.
-
-    Strategy (quality first, then resolution):
-      1. Encode at configured JPEG quality, 4:4:4.
-      2. If still small, encode at quality 100.
-      3. If still small, enlarge with LANCZOS (content-preserving).
-      4. Prefer light grain over enormous canvases when the picture is too compressible.
-      5. If enlargement overshoots, walk back toward the 4× size while staying ≥ min.
-      6. Never pad the bitstream with comment markers or trailing zeros.
-    """
+    """Encode a real JPEG that is at least `min_bytes` (and ≤ max_bytes when set)."""
     img = pil.convert("RGB")
     quality = max(70, min(100, JPEG_QUALITY))
-    soft_max = max(int(min_bytes * 1.65), min_bytes + 1_500_000)
+    if max_bytes is not None and max_bytes < min_bytes:
+        raise AppError("invalid_settings", "Maximum output size must be at least the minimum.")
+    if max_bytes is not None:
+        soft_max = max_bytes
+    else:
+        soft_max = max(int(min_bytes * 1.65), min_bytes + 1_500_000)
     grain_after_pixels = min(max_pixels, max(3_000_000, min_bytes // 2))
 
     def done(blob: bytes, im: Image.Image) -> tuple[bytes, Image.Image]:
@@ -290,7 +315,7 @@ def jpeg_at_least_min_bytes(
                 return done(data, img)
             raise AppError(
                 "output_limit",
-                "We couldn't produce a JPEG of at least 4 MB without exceeding size limits.",
+                f"We couldn't produce a JPEG of at least {_size_phrase(min_bytes)} without exceeding size limits.",
             )
         img = img.resize((nw, nh), Image.Resampling.LANCZOS)
         data = _encode_jpeg(img, 100)
@@ -303,7 +328,7 @@ def jpeg_at_least_min_bytes(
         return done(data, img)
     raise AppError(
         "output_limit",
-        "We couldn't produce a JPEG of at least 4 MB without exceeding size limits.",
+        f"We couldn't produce a JPEG of at least {_size_phrase(min_bytes)} without exceeding size limits.",
     )
 
 
@@ -313,40 +338,58 @@ def process_image_bytes(data: bytes) -> bytes:
     return jpeg
 
 
-def process_image(data: bytes, progress=None) -> tuple[bytes, dict, Image.Image]:
-    """Full pipeline: validate is assumed done by caller; we still re-open.
+def process_image(
+    data: bytes,
+    progress=None,
+    scale: int = UPSCALE_FACTOR,
+    min_bytes: int = MIN_OUTPUT_BYTES,
+    max_bytes: Optional[int] = None,
+) -> tuple[bytes, dict, Image.Image]:
+    """Full pipeline. Defaults remain 4× and the configured 4 MB floor."""
 
-    Returns (jpeg_bytes, info, result_image).
-    """
     def report(pct: int, stage: str) -> None:
         if progress:
             progress(pct, stage)
 
+    if scale not in (2, 4, 8):
+        scale = 4
     report(5, "loading")
     img = Image.open(io.BytesIO(data))
     img.load()
     prepared = prepare_for_upscale(img)
     src_w, src_h = prepared.size
+    if src_w * src_h * scale * scale > MAX_OUTPUT_PIXELS:
+        raise AppError(
+            "too_many_pixels",
+            f"This image is too large for {scale}× upscaling. Try a smaller factor.",
+        )
     report(15, "upscaling")
-    upscaled, backend = ai_upscale(prepared, scale=UPSCALE_FACTOR)
+    upscaled, backend = ai_upscale(prepared, scale=scale)
     report(70, "encoding")
-    jpeg, final_img = jpeg_at_least_min_bytes(upscaled)
+    jpeg, final_img = jpeg_at_least_min_bytes(upscaled, min_bytes=min_bytes, max_bytes=max_bytes)
     if not jpeg.startswith(b"\xff\xd8\xff"):
         raise AppError("upscale_failed", "The output was not a valid JPEG.")
-    if len(jpeg) < MIN_OUTPUT_BYTES:
+    if len(jpeg) < min_bytes:
         raise AppError(
             "output_limit",
-            "We couldn't produce a JPEG of at least 4 MB without exceeding size limits.",
+            f"We couldn't produce a JPEG of at least {_size_phrase(min_bytes)} without exceeding size limits.",
+        )
+    if max_bytes is not None and len(jpeg) > max_bytes:
+        raise AppError(
+            "output_limit",
+            f"We couldn't keep the JPEG under {_size_phrase(max_bytes)} while meeting the minimum size.",
         )
     report(100, "done")
     info = {
         "backend": backend,
-        "scale": UPSCALE_FACTOR,
+        "scale": scale,
         "original_width": src_w,
         "original_height": src_h,
         "output_width": final_img.size[0],
         "output_height": final_img.size[1],
         "output_size": len(jpeg),
         "output_format": "JPEG",
+        "min_output_bytes": min_bytes,
+        "max_output_bytes": max_bytes,
     }
     return jpeg, info, final_img
