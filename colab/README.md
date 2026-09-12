@@ -22,7 +22,7 @@ Uses **spandrel** + Colab’s bundled PyTorch. Avoids deprecated BasicSR / GFPGA
   stream, no resume, throttled to ~1–3 MB/s and paused whenever the tab loses focus.
 * Large single files go through a blob URL; Chrome can run out of memory and fail the
   download silently above a few hundred MB.
-* The ZIP used `ZIP_DEFLATED`, which re-compresses quality-100 JPEGs for ~0% savings.
+* The ZIP used `ZIP_DEFLATED`, which re-compresses JPEGs for ~0% savings.
 * Downloading every image *and* the ZIP moved the whole batch twice.
 * Full-size inline previews add MBs of base64 per cell — that also makes
   **File → Download → `.ipynb`** slow. Clear outputs (Edit → Clear all outputs) first,
