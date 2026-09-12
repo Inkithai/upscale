@@ -206,6 +206,7 @@ It uses Colab’s PyTorch plus **spandrel** (Real-ESRGAN x4). Do not swap it for
 | Image rotated wrong | File may lack EXIF; we only correct tagged orientation. |
 | Black PNG background | Set `TRANSPARENCY_BG=#FFFFFF` (the default). |
 | Disk filling up | Jobs are deleted after `JOB_TTL_SECONDS`. Restart also wipes `jobs/`. |
+| Colab download is slow | Don't use `files.download()` for a batch — it streams over the websocket at 1–3 MB/s and stalls when the tab is backgrounded. Use the **Drive** or **Ports** export in the notebook (see `colab/README.md`), or clear outputs before downloading the `.ipynb`. |
 | Host runs out of RAM | Lower `MAX_IMAGE_PIXELS`, `MAX_IMAGES_PER_BATCH`, and `MAX_CONCURRENT_JOBS`. |
 
 ## Project layout
